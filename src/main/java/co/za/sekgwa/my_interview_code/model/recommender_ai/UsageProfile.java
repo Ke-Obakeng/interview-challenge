@@ -1,4 +1,4 @@
-package co.za.sekgwa.my_interview_code.model;
+package co.za.sekgwa.my_interview_code.model.recommender_ai;
 
 import lombok.Getter;
 import lombok.Setter;
