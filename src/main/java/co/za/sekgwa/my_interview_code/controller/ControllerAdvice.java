@@ -1,7 +1,9 @@
 package co.za.sekgwa.my_interview_code.controller;
 
+import ch.qos.logback.classic.Logger;
 import co.za.sekgwa.my_interview_code.exception.ResourceNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import co.za.sekgwa.my_interview_code.dto.ErrorResponse;
@@ -10,7 +12,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.time.LocalDateTime;
 import java.util.List;
-
+@Slf4j
 @RestControllerAdvice
 public class ControllerAdvice {
 
@@ -36,3 +38,4 @@ public class ControllerAdvice {
         return ResponseEntity.status(status).body(err);
     }
 }
+
