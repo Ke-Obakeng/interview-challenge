@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Service
 public class RecommendationServiceImpl implements RecommendationService {
@@ -66,8 +67,7 @@ public class RecommendationServiceImpl implements RecommendationService {
 
     private RecommendationResponse mapToResponse(List<ProductCatalogue> products, UsageProfile usageProfile, String source, String prompt, String reason) {
 
-        double num = (Math.random() * 90000) + 10000;
-        String recommendationId = "REC" + num;
+        String recommendationId = generateRecommenderId();
 
         List<RecommendationItem> items = products.stream()
                 .map(product -> new RecommendationItem(
@@ -123,5 +123,11 @@ public class RecommendationServiceImpl implements RecommendationService {
         }catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    private String generateRecommenderId() {
+        int randomNumber = ThreadLocalRandom.current().nextInt(100000);
+        String ran = String.format("%05d", randomNumber);
+        return "REC-" + ran;
     }
 }

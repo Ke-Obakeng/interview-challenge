@@ -7,36 +7,21 @@ import co.za.sekgwa.my_interview_code.model.recommender_ai.UsageProfile;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.client.RestClientException;
-import org.springframework.web.client.RestTemplate;
 
+import java.math.BigDecimal;
 import java.util.List;
-import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.when;
 
-/**
- * Note: ObjectMapper is instantiated directly inside AiBundleRecommendationProvider
- * (not injected), so it can't be mocked - these tests instead supply real JSON strings
- * as the mocked RestTemplate's response body and let the real Jackson 3 ObjectMapper
- * parse them, which exercises the actual parsing logic rather than a stubbed shortcut.
- */
 @ExtendWith(MockitoExtension.class)
 class AiBundleRecommendationProviderTest {
 
-    private static final String ENDPOINT = "http://localhost:8080/api/v1/bundle-recommendations";
-
-    @Mock
-    private RestTemplate restTemplate;
+    private final AiBundleRecommendationProvider provider = new AiBundleRecommendationProvider();
 
     @Mock
     private RecommendationRequest recommendationRequest;
@@ -44,150 +29,209 @@ class AiBundleRecommendationProviderTest {
     @Mock
     private UsageProfile usageProfile;
 
-    private AiBundleRecommendationProvider provider;
-
     @BeforeEach
     void setUp() {
-        provider = new AiBundleRecommendationProvider(restTemplate);
-        lenient().when(recommendationRequest.getCustomerReference()).thenReturn("CUST-10291");
         lenient().when(recommendationRequest.getUsageProfile()).thenReturn(usageProfile);
+        lenient().when(recommendationRequest.getCustomerReference()).thenReturn("CUST-10291");
     }
 
-    private ProductCatalogue product(String productCode) {
-        ProductCatalogue p = mock(ProductCatalogue.class);
-        lenient().when(p.getProductCode()).thenReturn(productCode);
+    private ProductCatalogue product(String code, String price, String type) {
+        ProductCatalogue p = org.mockito.Mockito.mock(ProductCatalogue.class);
+        lenient().when(p.getProductCode()).thenReturn(code);
+        lenient().when(p.getPrice()).thenReturn(new BigDecimal(price));
+        lenient().when(p.getType()).thenReturn(type);
         return p;
     }
 
-    @SuppressWarnings("unchecked")
-    private void mockAiResponse(String responseBody) {
-        ResponseEntity<String> response = new ResponseEntity<>(responseBody, org.springframework.http.HttpStatus.OK);
-        when(restTemplate.postForEntity(eq(ENDPOINT), any(HttpEntity.class), eq(String.class)))
-                .thenReturn(response);
+    // ---- demo failure trigger ----
+
+    @Test
+    void shouldThrowAiRecommendationExceptionWhenCustomerReferenceIsForceFailureTrigger() {
+        when(recommendationRequest.getCustomerReference()).thenReturn("CUST-AI-DOWN");
+
+        assertThatThrownBy(() -> provider.recommend(recommendationRequest, List.of()))
+                .isInstanceOf(AiRecommendationException.class)
+                .hasMessageContaining("Simulated AI provider failure");
     }
 
     @Test
-    void shouldCallTheExpectedEndpointWithCustomerReferenceAndUsageProfileInBody() {
-        mockAiResponse("{ \"recommendedId\": [] }");
-        ProductCatalogue p1 = product("PROD-001");
+    void shouldTreatTriggerAsCaseInsensitive() {
+        when(recommendationRequest.getCustomerReference()).thenReturn("cust-ai-down");
 
-        provider.recommend(recommendationRequest, List.of(p1));
-
-        ArgumentCaptor<HttpEntity<Map<String, Object>>> captor = ArgumentCaptor.forClass(HttpEntity.class);
-        verify(restTemplate).postForEntity(eq(ENDPOINT), captor.capture(), eq(String.class));
-
-        Map<String, Object> body = captor.getValue().getBody();
-        assertThat(body).isNotNull();
-        assertThat(body.get("customerReference")).isEqualTo("CUST-10291");
-        assertThat(body.get("usageProfile")).isEqualTo(usageProfile);
-        assertThat(body).doesNotContainKey("availableProducts"); // this line is currently commented out in the source
+        assertThatThrownBy(() -> provider.recommend(recommendationRequest, List.of()))
+                .isInstanceOf(AiRecommendationException.class);
     }
 
     @Test
-    void shouldReturnProductsMatchingRecommendedCodes() {
-        mockAiResponse("{ \"recommendedId\": [\"PROD-001\", \"PROD-004\"] }");
+    void shouldNotThrowForAnyOtherCustomerReference() {
+        when(usageProfile.getGetMaximumBudget()).thenReturn(BigDecimal.valueOf(1000));
 
-        ProductCatalogue p1 = product("PROD-001");
-        ProductCatalogue p2 = product("PROD-002");
-        ProductCatalogue p4 = product("PROD-004");
+        List<ProductCatalogue> result = provider.recommend(recommendationRequest,
+                List.of(product("PROD-001", "50", "PREPAID")));
 
-        List<ProductCatalogue> result = provider.recommend(recommendationRequest, List.of(p1, p2, p4));
+        assertThat(result).hasSize(1);
+    }
 
-        assertThat(result).containsExactly(p1, p4); // p2 excluded, order follows availableProducts, not the AI's array order
+    // ---- budget filtering ----
+
+    @Test
+    void shouldExcludeProductsOverBudget() {
+        when(usageProfile.getGetMaximumBudget()).thenReturn(BigDecimal.valueOf(100));
+
+        ProductCatalogue cheap = product("PROD-CHEAP", "50", "PREPAID");
+        ProductCatalogue expensive = product("PROD-EXP", "150", "PREPAID");
+
+        List<ProductCatalogue> result = provider.recommend(recommendationRequest, List.of(cheap, expensive));
+
+        assertThat(result).containsExactly(cheap);
     }
 
     @Test
-    void shouldPreserveAvailableProductsOrderNotAiReturnedOrder() {
-        // AI returns PROD-004 first, but PROD-001 appears first in availableProducts -
-        // the implementation's final filter preserves availableProducts' order.
-        mockAiResponse("{ \"recommendedId\": [\"PROD-004\", \"PROD-001\"] }");
+    void shouldIncludeProductAtExactlyTheBudget() {
+        // Uses compareTo(maxBudget) <= 0, so a product priced exactly at budget IS included
+        // here (unlike DeterministicBundleRecomProvider's strict < 0 check).
+        when(usageProfile.getGetMaximumBudget()).thenReturn(BigDecimal.valueOf(100));
 
-        ProductCatalogue p1 = product("PROD-001");
-        ProductCatalogue p4 = product("PROD-004");
+        ProductCatalogue atBudget = product("PROD-AT", "100", "PREPAID");
 
-        List<ProductCatalogue> result = provider.recommend(recommendationRequest, List.of(p1, p4));
+        List<ProductCatalogue> result = provider.recommend(recommendationRequest, List.of(atBudget));
 
-        assertThat(result).containsExactly(p1, p4);
+        assertThat(result).containsExactly(atBudget);
     }
 
     @Test
-    void shouldLimitResultsToThreeEvenIfMoreCodesRecommended() {
-        mockAiResponse("{ \"recommendedId\": [\"P1\", \"P2\", \"P3\", \"P4\"] }");
+    void shouldIncludeAllProductsWhenBudgetIsNull() {
+        when(usageProfile.getGetMaximumBudget()).thenReturn(null);
 
-        List<ProductCatalogue> available = List.of(
-                product("P1"), product("P2"), product("P3"), product("P4"));
+        ProductCatalogue expensive = product("PROD-EXP", "999999", "PREPAID");
 
-        List<ProductCatalogue> result = provider.recommend(recommendationRequest, available);
+        List<ProductCatalogue> result = provider.recommend(recommendationRequest, List.of(expensive));
+
+        assertThat(result).containsExactly(expensive);
+    }
+
+    @Test
+    void shouldReturnEmptyListWhenNothingFitsBudget() {
+        when(usageProfile.getGetMaximumBudget()).thenReturn(BigDecimal.valueOf(10));
+
+        ProductCatalogue expensive = product("PROD-EXP", "500", "PREPAID");
+
+        List<ProductCatalogue> result = provider.recommend(recommendationRequest, List.of(expensive));
+
+        assertThat(result).isEmpty();
+    }
+
+    // ---- usage-based type preference ----
+
+    @Test
+    void shouldPreferBundleTypeWhenDataUsageIsHigh() {
+        when(usageProfile.getGetMaximumBudget()).thenReturn(BigDecimal.valueOf(1000));
+        when(usageProfile.getAverageMonthlyDataMb()).thenReturn(3000); // above the 2000 threshold
+        when(usageProfile.getAverageMonthlyVoiceMinutes()).thenReturn(10);
+
+        ProductCatalogue bundleProduct = product("PROD-BUNDLE", "50", "BUNDLE");
+        ProductCatalogue prepaidProduct = product("PROD-PREPAID", "50", "PREPAID");
+
+        List<ProductCatalogue> result = provider.recommend(recommendationRequest,
+                List.of(prepaidProduct, bundleProduct));
+
+        assertThat(result).containsExactly(bundleProduct); // only the BUNDLE-type match returned
+    }
+
+    @Test
+    void shouldPreferBundleTypeWhenVoiceUsageIsHigh() {
+        when(usageProfile.getGetMaximumBudget()).thenReturn(BigDecimal.valueOf(1000));
+        when(usageProfile.getAverageMonthlyDataMb()).thenReturn(100);
+        when(usageProfile.getAverageMonthlyVoiceMinutes()).thenReturn(400); // above the 300 threshold
+
+        ProductCatalogue bundleProduct = product("PROD-BUNDLE", "50", "BUNDLE");
+        ProductCatalogue prepaidProduct = product("PROD-PREPAID", "50", "PREPAID");
+
+        List<ProductCatalogue> result = provider.recommend(recommendationRequest,
+                List.of(prepaidProduct, bundleProduct));
+
+        assertThat(result).containsExactly(bundleProduct);
+    }
+
+    @Test
+    void shouldPreferPrepaidTypeWhenUsageIsLow() {
+        when(usageProfile.getGetMaximumBudget()).thenReturn(BigDecimal.valueOf(1000));
+        when(usageProfile.getAverageMonthlyDataMb()).thenReturn(500); // below threshold
+        when(usageProfile.getAverageMonthlyVoiceMinutes()).thenReturn(50); // below threshold
+
+        ProductCatalogue bundleProduct = product("PROD-BUNDLE", "50", "BUNDLE");
+        ProductCatalogue prepaidProduct = product("PROD-PREPAID", "50", "PREPAID");
+
+        List<ProductCatalogue> result = provider.recommend(recommendationRequest,
+                List.of(bundleProduct, prepaidProduct));
+
+        assertThat(result).containsExactly(prepaidProduct);
+    }
+
+    @Test
+    void shouldFallBackToAllInBudgetProductsWhenNoPreferredTypeMatches() {
+        // High usage -> prefers "BUNDLE", but none exist - should still return the in-budget
+        // POSTPAID product rather than an empty list.
+        when(usageProfile.getGetMaximumBudget()).thenReturn(BigDecimal.valueOf(1000));
+        when(usageProfile.getAverageMonthlyDataMb()).thenReturn(3000);
+        when(usageProfile.getAverageMonthlyVoiceMinutes()).thenReturn(10);
+
+        ProductCatalogue postpaidProduct = product("PROD-POST", "50", "POSTPAID");
+
+        List<ProductCatalogue> result = provider.recommend(recommendationRequest, List.of(postpaidProduct));
+
+        assertThat(result).containsExactly(postpaidProduct);
+    }
+
+    // ---- price-ascending ranking within the preferred type ----
+
+    @Test
+    void shouldRankCheapestFirstWithinPreferredType() {
+        when(usageProfile.getGetMaximumBudget()).thenReturn(BigDecimal.valueOf(1000));
+        when(usageProfile.getAverageMonthlyDataMb()).thenReturn(100);
+        when(usageProfile.getAverageMonthlyVoiceMinutes()).thenReturn(10);
+
+        ProductCatalogue pricier = product("PROD-PRICIER", "90", "PREPAID");
+        ProductCatalogue cheaper = product("PROD-CHEAPER", "50", "PREPAID");
+
+        List<ProductCatalogue> result = provider.recommend(recommendationRequest,
+                List.of(pricier, cheaper));
+
+        assertThat(result.get(0)).isEqualTo(cheaper); // ascending, opposite of the deterministic fallback
+    }
+
+    // ---- cap at 3 ----
+
+    @Test
+    void shouldLimitResultsToThreeEvenWithMoreEligibleProducts() {
+        when(usageProfile.getGetMaximumBudget()).thenReturn(BigDecimal.valueOf(1000));
+        when(usageProfile.getAverageMonthlyDataMb()).thenReturn(100);
+        when(usageProfile.getAverageMonthlyVoiceMinutes()).thenReturn(10);
+
+        List<ProductCatalogue> fourProducts = List.of(
+                product("P1", "10", "PREPAID"),
+                product("P2", "20", "PREPAID"),
+                product("P3", "30", "PREPAID"),
+                product("P4", "40", "PREPAID")
+        );
+
+        List<ProductCatalogue> result = provider.recommend(recommendationRequest, fourProducts);
 
         assertThat(result).hasSize(3);
     }
 
-    @Test
-    void shouldReturnEmptyListWhenNoAvailableProductMatchesRecommendedCodes() {
-        mockAiResponse("{ \"recommendedId\": [\"PROD-999\"] }");
-
-        ProductCatalogue p1 = product("PROD-001");
-
-        List<ProductCatalogue> result = provider.recommend(recommendationRequest, List.of(p1));
-
-        assertThat(result).isEmpty();
-    }
+    // ---- null usage profile defensiveness ----
 
     @Test
-    void shouldWrapRestClientExceptionInAiRecommendationException() {
-        when(restTemplate.postForEntity(eq(ENDPOINT), any(HttpEntity.class), eq(String.class)))
-                .thenThrow(new RestClientException("connection refused"));
+    void shouldTreatNullUsageProfileAsLowUsageAndNotThrow() {
+        when(recommendationRequest.getUsageProfile()).thenReturn(null);
 
-        ProductCatalogue p1 = product("PROD-001");
+        ProductCatalogue prepaidProduct = product("PROD-PREPAID", "50", "PREPAID");
 
-        assertThatThrownBy(() -> provider.recommend(recommendationRequest, List.of(p1)))
-                .isInstanceOf(AiRecommendationException.class)
-                .hasMessageContaining("AI provider not available")
-                .hasCauseInstanceOf(RestClientException.class);
-    }
+        // No budget/usage info at all - should not throw, and with a null profile the budget
+        // filter is skipped entirely (maxBudget stays null -> everything passes).
+        List<ProductCatalogue> result = provider.recommend(recommendationRequest, List.of(prepaidProduct));
 
-    @Test
-    void shouldWrapMalformedJsonResponseInAiRecommendationException() {
-        mockAiResponse("this is not valid json {{{");
-
-        ProductCatalogue p1 = product("PROD-001");
-
-        assertThatThrownBy(() -> provider.recommend(recommendationRequest, List.of(p1)))
-                .isInstanceOf(AiRecommendationException.class)
-                .hasMessageContaining("Failed to parse AI recommendation");
-    }
-
-    @Test
-    void shouldWrapMissingRecommendedIdFieldInAiRecommendationException() {
-        // "recommendedId" is absent entirely -> rootNode.get("recommendedId") returns null,
-        // and the subsequent .forEach(...) on that null throws NPE, which is caught and wrapped.
-        mockAiResponse("{ \"someOtherField\": [] }");
-
-        ProductCatalogue p1 = product("PROD-001");
-
-        assertThatThrownBy(() -> provider.recommend(recommendationRequest, List.of(p1)))
-                .isInstanceOf(AiRecommendationException.class)
-                .hasMessageContaining("Failed to parse AI recommendation");
-    }
-
-    @Test
-    void shouldWrapNullResponseBodyInAiRecommendationException() {
-        when(restTemplate.postForEntity(eq(ENDPOINT), any(HttpEntity.class), eq(String.class)))
-                .thenReturn(new ResponseEntity<>((String) null, org.springframework.http.HttpStatus.OK));
-
-        ProductCatalogue p1 = product("PROD-001");
-
-        assertThatThrownBy(() -> provider.recommend(recommendationRequest, List.of(p1)))
-                .isInstanceOf(AiRecommendationException.class)
-                .hasMessageContaining("Failed to parse AI recommendation");
-    }
-
-    @Test
-    void shouldReturnEmptyListWhenAvailableProductsIsEmpty() {
-        mockAiResponse("{ \"recommendedId\": [\"PROD-001\"] }");
-
-        List<ProductCatalogue> result = provider.recommend(recommendationRequest, List.of());
-
-        assertThat(result).isEmpty();
+        assertThat(result).containsExactly(prepaidProduct);
     }
 }

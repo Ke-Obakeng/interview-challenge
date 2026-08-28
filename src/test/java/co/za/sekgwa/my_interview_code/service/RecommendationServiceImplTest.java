@@ -163,7 +163,7 @@ class RecommendationServiceImplTest {
 
         // recommendationId is "REC" + a raw double (e.g. "REC54213.778..."), not a UUID -
         // this test locks in that current (unformatted) shape rather than assuming a cleaner one.
-        assertThat(response.getRecommendationId()).matches("^REC\\d+\\.\\d+$");
+        assertThat(response.getRecommendationId()).matches("REC-\\d{5}");
     }
 
     @Test

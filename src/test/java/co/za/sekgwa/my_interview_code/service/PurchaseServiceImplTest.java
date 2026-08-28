@@ -1,5 +1,6 @@
 package co.za.sekgwa.my_interview_code.service;
 
+import co.za.sekgwa.my_interview_code.client.EligibilityClient;
 import co.za.sekgwa.my_interview_code.client.PaymentClient;
 import co.za.sekgwa.my_interview_code.client.ProductCatalogueClient;
 import co.za.sekgwa.my_interview_code.client.ProvisioningClient;
@@ -11,6 +12,7 @@ import co.za.sekgwa.my_interview_code.exception.ProductNotFoundException;
 import co.za.sekgwa.my_interview_code.exception.PurchaseNotFoundException;
 import co.za.sekgwa.my_interview_code.model.ProductCatalogue;
 import co.za.sekgwa.my_interview_code.model.ProvisioningStatus;
+import co.za.sekgwa.my_interview_code.model.eligibility.EligibilityResult;
 import co.za.sekgwa.my_interview_code.model.payment.PaymentResult;
 import co.za.sekgwa.my_interview_code.model.payment.PaymentStatus;
 import co.za.sekgwa.my_interview_code.model.provisioning.ProvisioningResult;
@@ -38,6 +40,9 @@ class PurchaseServiceImplTest {
     private ProductCatalogueClient productCatalogueClient;
 
     @Mock
+    private EligibilityClient eligibilityClient;
+
+    @Mock
     private PaymentClient paymentClient;
 
     @Mock
@@ -51,9 +56,10 @@ class PurchaseServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new PurchaseServiceImpl(productCatalogueClient, paymentClient, provisioningClient, purchaseRepository);
+        service = new PurchaseServiceImpl(productCatalogueClient, eligibilityClient,paymentClient, provisioningClient, purchaseRepository);
         lenient().when(purchaseRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         product = new ProductCatalogue("PROD-004", "Basic SMS Bundle", BigDecimal.valueOf(99), "30", "PREPAID");
+        lenient().when(eligibilityClient.checkEligibility(any(), any())).thenReturn(EligibilityResult.eligible());
     }
 
     private PurchaseRequest buildRequest() {
@@ -62,7 +68,13 @@ class PurchaseServiceImplTest {
         request.setProductCode("PROD-004");
         request.setPaymentMethod("CARD");
         request.setChannel("APP");
-        request.setMsisdn("+27821234567");
+        request.setMsisdn("0821234567");
+        return request;
+    }
+
+    private PurchaseRequest buildRequest(String msisdn) {
+        PurchaseRequest request = buildRequest();
+        request.setMsisdn(msisdn);
         return request;
     }
 
@@ -82,7 +94,74 @@ class PurchaseServiceImplTest {
         return new ProvisioningStatusResult(status, null);
     }
 
-    // ---- idempotency key validation ----
+    //Msisdn Validation
+
+    @Test
+    void shouldAcceptTenDigitMsisdn() {
+        when(purchaseRepository.findByIdempotencyKey("idem-msisdn-1")).thenReturn(Optional.empty());
+        when(productCatalogueClient.findProduct("PROD-004")).thenReturn(product);
+        when(paymentClient.charge(any())).thenReturn(successfulPayment("TXN-M1"));
+        when(provisioningClient.allocate(any())).thenReturn(provisioningResult(ProvisioningStatus.SUCCESS, "PROV-M1"));
+
+        PurchaseResponse response = service.purchase(buildRequest("0821234567"), "idem-msisdn-1");
+
+        assertThat(response.getStatus()).isEqualTo("SUCCESSFUL");
+    }
+
+
+    @Test
+    void shouldAcceptElevenDigitMsisdn() {
+        when(purchaseRepository.findByIdempotencyKey("idem-msisdn-2")).thenReturn(Optional.empty());
+        when(productCatalogueClient.findProduct("PROD-004")).thenReturn(product);
+        when(paymentClient.charge(any())).thenReturn(successfulPayment("TXN-M2"));
+        when(provisioningClient.allocate(any())).thenReturn(provisioningResult(ProvisioningStatus.SUCCESS, "PROV-M2"));
+
+        PurchaseResponse response = service.purchase(buildRequest("27821234567"), "idem-msisdn-2");
+
+        assertThat(response.getStatus()).isEqualTo("SUCCESSFUL");
+    }
+
+    @Test
+    void shouldAcceptElevenDigitMsisdnWithLeadingPlusNotCountedTowardsDigitTotal() {
+        when(purchaseRepository.findByIdempotencyKey("idem-msisdn-3")).thenReturn(Optional.empty());
+        when(productCatalogueClient.findProduct("PROD-004")).thenReturn(product);
+        when(paymentClient.charge(any())).thenReturn(successfulPayment("TXN-M3"));
+        when(provisioningClient.allocate(any())).thenReturn(provisioningResult(ProvisioningStatus.SUCCESS, "PROV-M3"));
+
+        PurchaseResponse response = service.purchase(buildRequest("+27821234567"), "idem-msisdn-3");
+
+        assertThat(response.getStatus()).isEqualTo("SUCCESSFUL");
+    }
+
+    @Test
+    void shouldRejectTwelveDigitMsisdn() {
+        assertThatThrownBy(() -> service.purchase(buildRequest("278212345678"), "idem-msisdn-4"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("msisdn must be exactly 10 or 11 digits");
+    }
+
+    @Test
+    void shouldRejectNullMsisdn() {
+        assertThatThrownBy(() -> service.purchase(buildRequest(null), "idem-msisdn-5"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("msisdn is required");
+    }
+
+    @Test
+    void shouldRejectBlankMsisdn() {
+        assertThatThrownBy(() -> service.purchase(buildRequest("   "), "idem-msisdn-6"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("msisdn is required");
+    }
+
+    @Test
+    void shouldRejectMsisdnWithNonDigitCharacters() {
+        assertThatThrownBy(() -> service.purchase(buildRequest("082-123-4567"), "idem-msisdn-7"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("msisdn must be exactly 10 or 11 digits");
+    }
+
+        // ---- idempotency key validation ----
 
     @Test
     void shouldRejectNullIdempotencyKey() {
