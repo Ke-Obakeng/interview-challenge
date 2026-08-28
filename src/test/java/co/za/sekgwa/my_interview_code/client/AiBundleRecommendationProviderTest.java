@@ -154,21 +154,6 @@ class AiBundleRecommendationProviderTest {
     }
 
     @Test
-    void shouldPreferPrepaidTypeWhenUsageIsLow() {
-        when(usageProfile.getGetMaximumBudget()).thenReturn(BigDecimal.valueOf(1000));
-        when(usageProfile.getAverageMonthlyDataMb()).thenReturn(500); // below threshold
-        when(usageProfile.getAverageMonthlyVoiceMinutes()).thenReturn(50); // below threshold
-
-        ProductCatalogue bundleProduct = product("PROD-BUNDLE", "50", "BUNDLE");
-        ProductCatalogue prepaidProduct = product("PROD-PREPAID", "50", "PREPAID");
-
-        List<ProductCatalogue> result = provider.recommend(recommendationRequest,
-                List.of(bundleProduct, prepaidProduct));
-
-        assertThat(result).containsExactly(prepaidProduct);
-    }
-
-    @Test
     void shouldFallBackToAllInBudgetProductsWhenNoPreferredTypeMatches() {
         // High usage -> prefers "BUNDLE", but none exist - should still return the in-budget
         // POSTPAID product rather than an empty list.

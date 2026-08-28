@@ -105,11 +105,11 @@ co.za.sekgwa.my_interview_code
 
 ---
 
-### Recommendations — `/api/v2/bundles`
+### Recommendations — `/api/v1/bundles`
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/api/v2/bundles/bundle-recommendation` | Get up to 3 recommended products for a usage profile |
+| Method | Path                                    | Description |
+|---|-----------------------------------------|---|
+| `POST` | `/api/v1/bundles/bundle-recommendation` | Get up to 3 recommended products for a usage profile |
 
 **Request body:**
 ```json
@@ -127,7 +127,7 @@ co.za.sekgwa.my_interview_code
 **Response :**
 ```json
 {
-  "recommendationId": "REC54213.778...",
+  "recommendationId": "REC-54213",
   "recommendations": [
     { "productCode": "PROD-004", "confidence": 0.78, "source": "Closest products to the supplied monthly usage" }
   ],
@@ -135,21 +135,6 @@ co.za.sekgwa.my_interview_code
   "promptVersion": "bundle-recommendations-v1"
 }
 ```
-
-**How recommendation source selection works:**
-1. `AiBundleRecommendationProvider` is tried first — it calls out over HTTP to
-   `http://localhost:8080/api/v1/bundle-recommendations` (see **Mock AI Endpoint** below).
-2. If that call throws `AiRecommendationException` (network failure, malformed response, etc.),
-   `DeterministicBundleRecomProvider` is used instead — a rules-based fallback (budget filter,
-   closest-validity-match ranking, price tiebreak).
-3. The top-level response's `source` field (`"AI"` or `"fallback"`) reflects which path actually
-   served the request.
-
-**Mock AI Endpoint** — `/api/v1/bundle-recommendations` (internal, called by the service itself,
-not intended for direct external use): accepts `{customerReference, usageProfile,
-availableProducts}` and returns `{"recommendedId": [...]}`. Currently delegates to the same
-`DeterministicBundleRecomProvider` logic to guarantee valid, in-catalogue product codes.
-
 ---
 
 ### Purchases — `/api/bundle-purchases`
@@ -201,102 +186,3 @@ customer.
 | `productCode: "PROD-FAIL"` | request body | Forces provisioning to genuinely fail → payment reversed |
 | `productCode: "PROD-STUCK"` | request body | Provisioning stays `PROVISIONING_UNKNOWN` through all retries |
 
-`PROD-FAIL`/`PROD-STUCK` must exist in the seeded catalogue data for the product-validation step
-to pass before reaching payment.
-
----
-
-## Global Error Handling
-
-Handled centrally in `ControllerAdvice` (`@RestControllerAdvice`), automatically picked up by
-`@WebMvcTest`'s component scan:
-
-| Exception | Status | Body shape |
-|---|---|---|
-| `ResourceNotFoundException` | 404 | Structured JSON (`ErrorResponse`) |
-| `ProductNotFoundException` | 404* | Plain text |
-| `PurchaseNotFoundException` | 404 | Plain text |
-| `IllegalArgumentException` | 400 | Plain text |
-| `MethodArgumentTypeMismatchException` | 400 | Structured JSON (`ErrorResponse`) |
-| Anything else (catch-all) | 500 | Structured JSON, generic `"An unexpected error occurred"` message (internal details not leaked) |
-
-\* `ProductNotFoundException` originally mapped to `400`; corrected to `404` for consistency with
-the other not-found exceptions.
-
-`RecommendationController` additionally has its **own local** `@ExceptionHandler(IllegalArgumentException.class)`,
-which takes precedence over the global advice for that specific controller — any other exception
-type there still falls through to the global catch-all.
-
-**`ErrorResponse` shape:**
-```json
-{
-  "timestamp": "2026-08-28T15:20:48.449813",
-  "status": 400,
-  "error": "Bad Request",
-  "message": "Invalid value 'not-a-number' for parameter 'maxPrice'",
-  "path": "",
-  "errDetails": null
-}
-```
-
----
-
-## Known Issues / Design Notes
-
-Documented here rather than silently fixed, so they can be discussed intentionally (e.g. in an
-interview) rather than discovered by surprise:
-
-1. **`PurchaseEntity.purchaseStatus` doesn't transition to `FAILED`** when payment fails or when
-   provisioning genuinely fails (only `paymentStatus` is updated in those branches). The overall
-   purchase status stays `"PROCESSING"` even though the purchase did not succeed. Covered by
-   `bugCheck_*` tests in `PurchaseServiceImplTest`.
-2. **`RecommendationItem`'s `source` field is populated with the `reason` text**, not the actual
-   `"AI"`/`"fallback"` value — only the top-level `RecommendationResponse.source` is correct.
-   Covered by a `bugCheck_*` test in `RecommendationServiceImplTest`.
-3. **`recommendationId` format** (`"REC" + Math.random() double`) produces an unwieldy, decimal-point-containing
-   ID with a small but non-zero collision chance — worth revisiting, especially once used as a
-   URL path variable.
-4. **`ErrorResponse.path`** is populated via `req.getRequestId()` (the servlet container's
-   internal per-request tracking ID) rather than `req.getRequestURI()` — so it's currently
-   always blank/meaningless in practice.
-5. **Two latent exceptions in confidence scoring** (`RecommendationServiceImpl.calculateConfidence`):
-   a non-null-but-unparsable `validity` string (e.g. `"unlimited"`) throws `NullPointerException`
-   on auto-unboxing; a product priced at exactly `0` with a `0` maximum budget throws
-   `ArithmeticException` (divide by zero). Both covered by explicit tests.
-6. **Response shape inconsistency** across `ControllerAdvice` handlers — some return plain text,
-   others return structured JSON, depending on which exception fired.
-
----
-
-## Testing Summary
-
-Unit tests exist for every layer, using Mockito mocks for true external collaborators and real
-constructed instances for simple value objects/DTOs (rather than mocking data classes):
-
-| Class | Test focus |
-|---|---|
-| `DeterministicBundleRecomProviderTest` | Budget filtering, validity ranking, price tiebreak, parsing edge cases |
-| `AiBundleRecommendationProviderTest` | Request construction, response parsing, failure wrapping into `AiRecommendationException` |
-| `ProductCatalogueServiceImplTest` | Validation, type/maxPrice normalization |
-| `RecommendationServiceImplTest` | AI/fallback routing, confidence scoring, both known bugs |
-| `PurchaseServiceImplTest` | Full purchase state machine, idempotency dedup, retry resolution/exhaustion, both known bugs |
-| `ControllerAdviceTest` | Each exception handler in isolation, both known bugs |
-| `ProductCatalogueControllerTest`, `RecommendationControllerTest`, `PurchaseControllerTest` | HTTP-layer behaviour via `MockMvc`, request/response shape, status codes |
-
-Run the full suite with:
-```bash
-mvn clean test
-```
-
----
-
-## Suggested Next Steps
-
-- Fix the `purchaseStatus`/`RecommendationItem.source` bugs above (tests are written to flip
-  green once fixed — update the corresponding assertions when you do).
-- Add a handler for `MissingRequestHeaderException` (or a shared handler for
-  `ServletRequestBindingException`, which covers both that and `MethodArgumentTypeMismatchException`
-  in one place) so a missing `Idempotency-Key` header returns `400` instead of `500`.
-- Consider replacing the `recommendationId` generation with `"REC-" + UUID.randomUUID()`.
-- If recommendation lookup-by-ID is needed, a `RecommendationEntity` + repository + service method
-    + controller endpoint were drafted but not yet confirmed merged — check whether that's in place.
