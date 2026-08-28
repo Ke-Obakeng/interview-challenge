@@ -25,10 +25,12 @@ with provisioning retry
 ## Running the Service
 
 ```bash
-mvn clean spring-boot:run
+1. docker compose build
+2. docker compose up
+3. Swagger UI: http://localhost:8080/swagger-ui/index.html
 ```
 
-The app starts on **`http://localhost:8080`**.
+The app starts on **`http://localhost:8080/swagger-ui/index.html`**.
 
 ### Key local URLs
 
