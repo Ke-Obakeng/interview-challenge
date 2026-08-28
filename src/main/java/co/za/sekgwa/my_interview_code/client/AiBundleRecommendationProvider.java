@@ -2,7 +2,7 @@ package co.za.sekgwa.my_interview_code.client;
 
 import co.za.sekgwa.my_interview_code.exception.AiRecommendationException;
 import co.za.sekgwa.my_interview_code.model.ProductCatalogue;
-import co.za.sekgwa.my_interview_code.model.RecommendationRequest;
+import co.za.sekgwa.my_interview_code.model.recommender_ai.RecommendationRequest;
 import co.za.sekgwa.my_interview_code.provider.BundleRecommendationProvider;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;

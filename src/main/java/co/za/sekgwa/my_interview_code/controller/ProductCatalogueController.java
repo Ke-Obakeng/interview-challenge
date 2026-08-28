@@ -26,12 +26,6 @@ public class ProductCatalogueController {
         ProductCatalogue productCatalogue = productCatalogueService.findProduct(productCode);
         return ResponseEntity.ok(productCatalogue);
     }
-//
-//    @GetMapping
-//    public ResponseEntity<List<ProductCatalogue>> findAllProducts() {
-//        List<ProductCatalogue> productCatalogue = productCatalogueService.findAllProducts();
-//        return ResponseEntity.ok(productCatalogue);
-//    }
 
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<String> handleResourceNotFoundException(ResourceNotFoundException ex) {

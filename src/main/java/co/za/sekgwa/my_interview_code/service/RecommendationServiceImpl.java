@@ -5,20 +5,18 @@ import co.za.sekgwa.my_interview_code.dto.RecommendationItem;
 import co.za.sekgwa.my_interview_code.dto.RecommendationResponse;
 import co.za.sekgwa.my_interview_code.exception.AiRecommendationException;
 import co.za.sekgwa.my_interview_code.model.ProductCatalogue;
-import co.za.sekgwa.my_interview_code.model.RecommendationRequest;
-import co.za.sekgwa.my_interview_code.model.UsageProfile;
+import co.za.sekgwa.my_interview_code.model.recommender_ai.RecommendationRequest;
+import co.za.sekgwa.my_interview_code.model.recommender_ai.UsageProfile;
 import co.za.sekgwa.my_interview_code.provider.BundleRecommendationProvider;
 import co.za.sekgwa.my_interview_code.provider.DeterministicBundleRecomProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
-import tools.jackson.databind.jsontype.PolymorphicTypeValidator;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
-import java.util.UUID;
 
 @Service
 public class RecommendationServiceImpl implements RecommendationService {

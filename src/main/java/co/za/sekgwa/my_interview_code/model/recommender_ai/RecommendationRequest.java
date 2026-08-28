@@ -1,8 +1,6 @@
-package co.za.sekgwa.my_interview_code.model;
+package co.za.sekgwa.my_interview_code.model.recommender_ai;
 
 import lombok.*;
-
-import java.util.Map;
 
 @Getter
 @Setter
