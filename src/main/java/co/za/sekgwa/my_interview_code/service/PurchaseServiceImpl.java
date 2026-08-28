@@ -26,6 +26,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Component
 public class PurchaseServiceImpl implements PurchaseService {
@@ -63,8 +64,9 @@ public class PurchaseServiceImpl implements PurchaseService {
             log.info("Duplicate request for the idempotency key {} - returning existing purchase {}", idempotencyKey, existing.get().getPurchaseId());
             return toPurchaseResponse(existing.get());
         }
-        double numOrd = (Math.random() * 10000) + 00000;
-        String purchaseId = "PUR-" + getTodaysDate(LocalDate.now()) + numOrd;
+
+        String purchaseId = createPurchaseId(LocalDate.now());
+        //String purchaseId = "PUR-1009202";
 
         PurchaseEntity purchase = new PurchaseEntity(
                 purchaseId, idempotencyKey, purchaseRequest.getCustomerReference(),
@@ -172,16 +174,14 @@ public class PurchaseServiceImpl implements PurchaseService {
         );
     }
 
+            private String createPurchaseId(LocalDate localDate) {
+        DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMdd");
+        String date  =  localDate.format(DATE_FORMATTER);
 
-    private String getTodaysDate(LocalDate date) {
-        //LocalDate today = LocalDate.now();
+        int randomNumber = ThreadLocalRandom.current().nextInt(100000);
+        String randomPart = String.format("%05d", randomNumber);
 
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMdd");
-
-        //String formattedDate = date.format(formatter);
-
-        return date.format(formatter);
-
+        return "PUR-" + date + "-" + randomPart;
     }
 
     private PurchaseResponse toPurchaseResponse(PurchaseEntity purchase) {

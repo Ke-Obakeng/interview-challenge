@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Component
 public class MockProvisioningClient implements ProvisioningClient{
@@ -17,7 +18,7 @@ public class MockProvisioningClient implements ProvisioningClient{
 
     @Override
     public ProvisioningResult allocate(ProvisioningRequest provisioningRequest) {
-        String reference = "PROVI-"+ UUID.randomUUID();
+        String reference = "PROVI-"+ randomNumberGen();
         statusCheckAttempts.put(reference, 0);
         return new ProvisioningResult(ProvisioningStatus.PROVISIONING_UNKNOWN, reference);
     }
@@ -28,5 +29,10 @@ public class MockProvisioningClient implements ProvisioningClient{
         ProvisioningStatus status = attempts >=1 ? ProvisioningStatus.SUCCESS : ProvisioningStatus.PROVISIONING_UNKNOWN;
 
         return new ProvisioningStatusResult(status, provisioningReference);
+    }
+
+    private String randomNumberGen() {
+        int randomNumber = ThreadLocalRandom.current().nextInt(100000);
+        return String.format("%05d", randomNumber);
     }
 }
