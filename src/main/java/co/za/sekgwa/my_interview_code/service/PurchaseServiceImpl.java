@@ -1,5 +1,6 @@
 package co.za.sekgwa.my_interview_code.service;
 
+import co.za.sekgwa.my_interview_code.client.EligibilityClient;
 import co.za.sekgwa.my_interview_code.client.PaymentClient;
 import co.za.sekgwa.my_interview_code.client.ProductCatalogueClient;
 import co.za.sekgwa.my_interview_code.client.ProvisioningClient;
@@ -7,11 +8,13 @@ import co.za.sekgwa.my_interview_code.dto.PurchaseRequest;
 import co.za.sekgwa.my_interview_code.dto.PurchaseResponse;
 import co.za.sekgwa.my_interview_code.dto.PurchaseStatusResponse;
 import co.za.sekgwa.my_interview_code.entity.PurchaseEntity;
+import co.za.sekgwa.my_interview_code.exception.CustomerNotEligibleException;
 import co.za.sekgwa.my_interview_code.exception.ProductNotFoundException;
 import co.za.sekgwa.my_interview_code.exception.PurchaseNotFoundException;
 import co.za.sekgwa.my_interview_code.model.ProductCatalogue;
 import co.za.sekgwa.my_interview_code.model.ProvisioningStatus;
 import co.za.sekgwa.my_interview_code.model.PurchaseStatus;
+import co.za.sekgwa.my_interview_code.model.eligibility.EligibilityResult;
 import co.za.sekgwa.my_interview_code.model.payment.PaymentRequest;
 import co.za.sekgwa.my_interview_code.model.payment.PaymentResult;
 import co.za.sekgwa.my_interview_code.model.payment.PaymentStatus;
@@ -36,15 +39,18 @@ public class PurchaseServiceImpl implements PurchaseService {
     private static final long RETRY_BACKOFF_MS = 200;
 
     private final ProductCatalogueClient productCatalogueClient;
+    private final EligibilityClient eligibilityClient;
     private final PaymentClient paymentClient;
     private final ProvisioningClient provisioningClient;
     private final PurchaseRepository purchaseRepository;
 
     public PurchaseServiceImpl(ProductCatalogueClient productCatalogueClient,
+                               EligibilityClient eligibilityClient,
                                PaymentClient paymentClient,
                                ProvisioningClient provisioningClient,
                                PurchaseRepository purchaseRepository) {
         this.productCatalogueClient = productCatalogueClient;
+        this.eligibilityClient = eligibilityClient;
         this.paymentClient = paymentClient;
         this.provisioningClient = provisioningClient;
         this.purchaseRepository = purchaseRepository;
@@ -56,6 +62,8 @@ public class PurchaseServiceImpl implements PurchaseService {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             throw new IllegalArgumentException("Idempotency Key cannot be null or blank");
         }
+
+        validateMsisdn(purchaseRequest.getMsisdn());
 
         //Idempotency check - If it has the same key, we return the same and don't reprocess
         var existing = purchaseRepository.findByIdempotencyKey(idempotencyKey);
@@ -72,6 +80,18 @@ public class PurchaseServiceImpl implements PurchaseService {
                 purchaseId, idempotencyKey, purchaseRequest.getCustomerReference(),
                 purchaseRequest.getProductCode(), purchaseRequest.getPaymentMethod(),
                 purchaseRequest.getChannel(), purchaseRequest.getMsisdn(), "ZAR");
+
+        EligibilityResult eligibilityResult = eligibilityClient.checkEligibility(
+                purchaseRequest.getCustomerReference(), purchaseRequest.getProductCode());
+
+        if (!eligibilityResult.isEligible()) {
+            purchase.setPurchaseStatus(PurchaseStatus.FAILED.name());
+            purchaseRepository.save(purchase);
+            throw new CustomerNotEligibleException(
+                    purchaseRequest.getCustomerReference(),
+                    purchaseRequest.getProductCode(),
+                    eligibilityResult.getReason());
+        }
 
         purchase.setPurchaseStatus(PurchaseStatus.RECEIVED.name());
         purchase.setPaymentStatus(PaymentStatus.PENDING.name());
@@ -174,7 +194,19 @@ public class PurchaseServiceImpl implements PurchaseService {
         );
     }
 
-            private String createPurchaseId(LocalDate localDate) {
+    private void validateMsisdn(String msisdn) {
+        if (msisdn == null || msisdn.isBlank()) {
+            throw new IllegalArgumentException("msisdn is required");
+        }
+
+        String toCheck = msisdn.startsWith("+") ? msisdn.substring(1) : msisdn;
+
+        if (!toCheck.matches("\\d{10}") && !toCheck.matches("\\d{11}")) {
+            throw new IllegalArgumentException("msisdn must be exactly 10 or 11 digits" + msisdn);
+        }
+    }
+
+    private String createPurchaseId(LocalDate localDate) {
         DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMdd");
         String date  =  localDate.format(DATE_FORMATTER);
 

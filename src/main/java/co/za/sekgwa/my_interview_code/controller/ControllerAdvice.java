@@ -1,6 +1,7 @@
 package co.za.sekgwa.my_interview_code.controller;
 
 import ch.qos.logback.classic.Logger;
+import co.za.sekgwa.my_interview_code.exception.CustomerNotEligibleException;
 import co.za.sekgwa.my_interview_code.exception.ProductNotFoundException;
 import co.za.sekgwa.my_interview_code.exception.PurchaseNotFoundException;
 import co.za.sekgwa.my_interview_code.exception.ResourceNotFoundException;
@@ -49,6 +50,11 @@ public class ControllerAdvice {
         String message = String.format(
                 "Invalid value '%s' for parameter '%s'", ex.getValue(), ex.getName());
         return build(HttpStatus.BAD_REQUEST, message, req, null);
+    }
+
+    @ExceptionHandler(CustomerNotEligibleException.class)
+    public ResponseEntity<String> handleCustomerNotEligible(CustomerNotEligibleException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ex.getMessage());
     }
 
     private ResponseEntity<ErrorResponse> build(HttpStatus status, String message, HttpServletRequest req, List<String> errDetails) {
