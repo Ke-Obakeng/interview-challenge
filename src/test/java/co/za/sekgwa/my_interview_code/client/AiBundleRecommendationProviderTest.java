@@ -67,7 +67,7 @@ class AiBundleRecommendationProviderTest {
         when(usageProfile.getGetMaximumBudget()).thenReturn(BigDecimal.valueOf(1000));
 
         List<ProductCatalogue> result = provider.recommend(recommendationRequest,
-                List.of(product("PROD-001", "50", "PREPAID")));
+                List.of(product("PROD-001", "50", "DATA")));
 
         assertThat(result).hasSize(1);
     }
@@ -78,8 +78,8 @@ class AiBundleRecommendationProviderTest {
     void shouldExcludeProductsOverBudget() {
         when(usageProfile.getGetMaximumBudget()).thenReturn(BigDecimal.valueOf(100));
 
-        ProductCatalogue cheap = product("PROD-CHEAP", "50", "PREPAID");
-        ProductCatalogue expensive = product("PROD-EXP", "150", "PREPAID");
+        ProductCatalogue cheap = product("PROD-CHEAP", "50", "DATA");
+        ProductCatalogue expensive = product("PROD-EXP", "150", "DATA");
 
         List<ProductCatalogue> result = provider.recommend(recommendationRequest, List.of(cheap, expensive));
 
@@ -88,11 +88,9 @@ class AiBundleRecommendationProviderTest {
 
     @Test
     void shouldIncludeProductAtExactlyTheBudget() {
-        // Uses compareTo(maxBudget) <= 0, so a product priced exactly at budget IS included
-        // here (unlike DeterministicBundleRecomProvider's strict < 0 check).
         when(usageProfile.getGetMaximumBudget()).thenReturn(BigDecimal.valueOf(100));
 
-        ProductCatalogue atBudget = product("PROD-AT", "100", "PREPAID");
+        ProductCatalogue atBudget = product("PROD-AT", "100", "DATA");
 
         List<ProductCatalogue> result = provider.recommend(recommendationRequest, List.of(atBudget));
 
@@ -103,7 +101,7 @@ class AiBundleRecommendationProviderTest {
     void shouldIncludeAllProductsWhenBudgetIsNull() {
         when(usageProfile.getGetMaximumBudget()).thenReturn(null);
 
-        ProductCatalogue expensive = product("PROD-EXP", "999999", "PREPAID");
+        ProductCatalogue expensive = product("PROD-EXP", "999999", "DATA");
 
         List<ProductCatalogue> result = provider.recommend(recommendationRequest, List.of(expensive));
 
@@ -114,7 +112,7 @@ class AiBundleRecommendationProviderTest {
     void shouldReturnEmptyListWhenNothingFitsBudget() {
         when(usageProfile.getGetMaximumBudget()).thenReturn(BigDecimal.valueOf(10));
 
-        ProductCatalogue expensive = product("PROD-EXP", "500", "PREPAID");
+        ProductCatalogue expensive = product("PROD-EXP", "500", "DATA");
 
         List<ProductCatalogue> result = provider.recommend(recommendationRequest, List.of(expensive));
 
@@ -124,48 +122,62 @@ class AiBundleRecommendationProviderTest {
     // ---- usage-based type preference ----
 
     @Test
-    void shouldPreferBundleTypeWhenDataUsageIsHigh() {
+    void shouldPreferDataTypeWhenDataUsageIsHighOnly() {
         when(usageProfile.getGetMaximumBudget()).thenReturn(BigDecimal.valueOf(1000));
-        when(usageProfile.getAverageMonthlyDataMb()).thenReturn(3000); // above the 2000 threshold
-        when(usageProfile.getAverageMonthlyVoiceMinutes()).thenReturn(10);
+        when(usageProfile.getAverageMonthlyDataMb()).thenReturn(300); // > 200 MB threshold
+        when(usageProfile.getAverageMonthlyVoiceMinutes()).thenReturn(10); // <= 100 min threshold
 
-        ProductCatalogue bundleProduct = product("PROD-BUNDLE", "50", "BUNDLE");
-        ProductCatalogue prepaidProduct = product("PROD-PREPAID", "50", "PREPAID");
+        ProductCatalogue dataProduct = product("PROD-DATA", "50", "DATA");
+        ProductCatalogue voiceProduct = product("PROD-VOICE", "50", "VOICE");
 
         List<ProductCatalogue> result = provider.recommend(recommendationRequest,
-                List.of(prepaidProduct, bundleProduct));
+                List.of(voiceProduct, dataProduct));
 
-        assertThat(result).containsExactly(bundleProduct); // only the BUNDLE-type match returned
+        assertThat(result).containsExactly(dataProduct);
     }
 
     @Test
-    void shouldPreferBundleTypeWhenVoiceUsageIsHigh() {
+    void shouldPreferVoiceTypeWhenVoiceUsageIsHighOnly() {
         when(usageProfile.getGetMaximumBudget()).thenReturn(BigDecimal.valueOf(1000));
-        when(usageProfile.getAverageMonthlyDataMb()).thenReturn(100);
-        when(usageProfile.getAverageMonthlyVoiceMinutes()).thenReturn(400); // above the 300 threshold
+        when(usageProfile.getAverageMonthlyDataMb()).thenReturn(100); // <= 200 MB threshold
+        when(usageProfile.getAverageMonthlyVoiceMinutes()).thenReturn(400); // > 100 min threshold
 
-        ProductCatalogue bundleProduct = product("PROD-BUNDLE", "50", "BUNDLE");
-        ProductCatalogue prepaidProduct = product("PROD-PREPAID", "50", "PREPAID");
+        ProductCatalogue voiceProduct = product("PROD-VOICE", "50", "VOICE");
+        ProductCatalogue dataProduct = product("PROD-DATA", "50", "DATA");
 
         List<ProductCatalogue> result = provider.recommend(recommendationRequest,
-                List.of(prepaidProduct, bundleProduct));
+                List.of(dataProduct, voiceProduct));
 
-        assertThat(result).containsExactly(bundleProduct);
+        assertThat(result).containsExactly(voiceProduct);
+    }
+
+    @Test
+    void shouldPreferComboTypeWhenBothDataAndVoiceUsageAreHigh() {
+        when(usageProfile.getGetMaximumBudget()).thenReturn(BigDecimal.valueOf(1000));
+        when(usageProfile.getAverageMonthlyDataMb()).thenReturn(300); // > 200 MB threshold
+        when(usageProfile.getAverageMonthlyVoiceMinutes()).thenReturn(400); // > 100 min threshold
+
+        ProductCatalogue comboProduct = product("PROD-COMBO", "50", "COMBO");
+        ProductCatalogue dataProduct = product("PROD-DATA", "50", "DATA");
+
+        List<ProductCatalogue> result = provider.recommend(recommendationRequest,
+                List.of(dataProduct, comboProduct));
+
+        assertThat(result).containsExactly(comboProduct);
     }
 
     @Test
     void shouldFallBackToAllInBudgetProductsWhenNoPreferredTypeMatches() {
-        // High usage -> prefers "BUNDLE", but none exist - should still return the in-budget
-        // POSTPAID product rather than an empty list.
+        // High data -> prefers "DATA", but only "VOICE" exists - falls back to voice product within budget
         when(usageProfile.getGetMaximumBudget()).thenReturn(BigDecimal.valueOf(1000));
-        when(usageProfile.getAverageMonthlyDataMb()).thenReturn(3000);
+        when(usageProfile.getAverageMonthlyDataMb()).thenReturn(300);
         when(usageProfile.getAverageMonthlyVoiceMinutes()).thenReturn(10);
 
-        ProductCatalogue postpaidProduct = product("PROD-POST", "50", "POSTPAID");
+        ProductCatalogue voiceProduct = product("PROD-VOICE", "50", "VOICE");
 
-        List<ProductCatalogue> result = provider.recommend(recommendationRequest, List.of(postpaidProduct));
+        List<ProductCatalogue> result = provider.recommend(recommendationRequest, List.of(voiceProduct));
 
-        assertThat(result).containsExactly(postpaidProduct);
+        assertThat(result).containsExactly(voiceProduct);
     }
 
     // ---- price-ascending ranking within the preferred type ----
@@ -173,16 +185,16 @@ class AiBundleRecommendationProviderTest {
     @Test
     void shouldRankCheapestFirstWithinPreferredType() {
         when(usageProfile.getGetMaximumBudget()).thenReturn(BigDecimal.valueOf(1000));
-        when(usageProfile.getAverageMonthlyDataMb()).thenReturn(100);
+        when(usageProfile.getAverageMonthlyDataMb()).thenReturn(300);
         when(usageProfile.getAverageMonthlyVoiceMinutes()).thenReturn(10);
 
-        ProductCatalogue pricier = product("PROD-PRICIER", "90", "PREPAID");
-        ProductCatalogue cheaper = product("PROD-CHEAPER", "50", "PREPAID");
+        ProductCatalogue pricier = product("PROD-PRICIER", "90", "DATA");
+        ProductCatalogue cheaper = product("PROD-CHEAPER", "50", "DATA");
 
         List<ProductCatalogue> result = provider.recommend(recommendationRequest,
                 List.of(pricier, cheaper));
 
-        assertThat(result.get(0)).isEqualTo(cheaper); // ascending, opposite of the deterministic fallback
+        assertThat(result.get(0)).isEqualTo(cheaper);
     }
 
     // ---- cap at 3 ----
@@ -190,14 +202,14 @@ class AiBundleRecommendationProviderTest {
     @Test
     void shouldLimitResultsToThreeEvenWithMoreEligibleProducts() {
         when(usageProfile.getGetMaximumBudget()).thenReturn(BigDecimal.valueOf(1000));
-        when(usageProfile.getAverageMonthlyDataMb()).thenReturn(100);
+        when(usageProfile.getAverageMonthlyDataMb()).thenReturn(300);
         when(usageProfile.getAverageMonthlyVoiceMinutes()).thenReturn(10);
 
         List<ProductCatalogue> fourProducts = List.of(
-                product("P1", "10", "PREPAID"),
-                product("P2", "20", "PREPAID"),
-                product("P3", "30", "PREPAID"),
-                product("P4", "40", "PREPAID")
+                product("P1", "10", "DATA"),
+                product("P2", "20", "DATA"),
+                product("P3", "30", "DATA"),
+                product("P4", "40", "DATA")
         );
 
         List<ProductCatalogue> result = provider.recommend(recommendationRequest, fourProducts);
@@ -211,12 +223,10 @@ class AiBundleRecommendationProviderTest {
     void shouldTreatNullUsageProfileAsLowUsageAndNotThrow() {
         when(recommendationRequest.getUsageProfile()).thenReturn(null);
 
-        ProductCatalogue prepaidProduct = product("PROD-PREPAID", "50", "PREPAID");
+        ProductCatalogue dataProduct = product("PROD-DATA", "50", "DATA");
 
-        // No budget/usage info at all - should not throw, and with a null profile the budget
-        // filter is skipped entirely (maxBudget stays null -> everything passes).
-        List<ProductCatalogue> result = provider.recommend(recommendationRequest, List.of(prepaidProduct));
+        List<ProductCatalogue> result = provider.recommend(recommendationRequest, List.of(dataProduct));
 
-        assertThat(result).containsExactly(prepaidProduct);
+        assertThat(result).containsExactly(dataProduct);
     }
 }

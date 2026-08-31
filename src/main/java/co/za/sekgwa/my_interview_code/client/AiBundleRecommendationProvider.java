@@ -38,18 +38,19 @@ public class AiBundleRecommendationProvider implements BundleRecommendationProvi
         UsageProfile profile = recommendationRequest.getUsageProfile();
         BigDecimal maxBudget = profile != null ? profile.getGetMaximumBudget() : null;
 
-        boolean highUsage = isHighUsage(profile);
-        String preferredType = highUsage ? "BUNDLE" : "PREPAID";
+        //Determine product
+        String preferredType = isHighUsage(profile);
 
         List<ProductCatalogue> withinBudget = availableProducts.stream()
                 .filter(p -> maxBudget == null || p.getPrice().compareTo(maxBudget) <= 0)
                 .toList();
-
-        List<ProductCatalogue> preferredTypeMatches = withinBudget.stream()
+        //filter by preferredType
+        List<ProductCatalogue> preferredTypeMatches = (preferredType != null) ? withinBudget.stream()
                 .filter(p -> preferredType.equalsIgnoreCase(p.getType()))
                 .sorted(Comparator.comparing(ProductCatalogue::getPrice)) // best value first
-                .toList();
-
+                .toList()
+                : Collections.emptyList();
+        //fallback if no preferred matches found
         List<ProductCatalogue> ranked = !preferredTypeMatches.isEmpty()
                 ? preferredTypeMatches
                 : withinBudget.stream()
@@ -76,14 +77,22 @@ public class AiBundleRecommendationProvider implements BundleRecommendationProvi
 
     }
 
-    private boolean isHighUsage(UsageProfile profile) {
+    private String isHighUsage(UsageProfile profile) {
         if (profile == null) {
-            return false;
+            return null;
         }
         boolean highData = profile.getAverageMonthlyDataMb() != null
                 && profile.getAverageMonthlyDataMb() > HIGH_USAGE_DATA_MB_THRESHOLD;
         boolean highVoice = profile.getAverageMonthlyVoiceMinutes() != null
                 && profile.getAverageMonthlyVoiceMinutes() > HIGH_USAGE_VOICE_MINUTES_THRESHOLD;
-        return highData || highVoice;
+
+        if(highData && highVoice) {
+            return "COMBO";
+        }else if(highData) {
+            return "DATA";
+        }else if(highVoice) {
+            return "VOICE";
+        }
+        return null;
     }
 }
